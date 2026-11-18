@@ -177,6 +177,22 @@ export const runSuite = (name: string, getPage: () => Page): void => describe(`M
     expect(await isIntersectingViewport(box2)).toBeTruthy()
   })
 
+  it.each([
+    { scrollSpeed: 100 },
+    { scrollSpeed: 95 },
+    { scrollSpeed: 50 },
+    { scrollSpeed: 100, scrollMode: 'momentum' as const }
+  ])('Should scroll diagonally to a far element with a margin (%j)', async (opts) => {
+    const box3 = await waitForSelector('#box3')
+    expect(await isIntersectingViewport(box3)).toBeFalsy()
+    await cursor.scrollIntoView(box3, { ...opts, inViewportMargin: 50, scrollDelay: 0 })
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(await isIntersectingViewport(box3)).toBeTruthy()
+    const { top, left } = await getScrollPosition()
+    expect(top).toBeGreaterThanOrEqual(4440)
+    expect(left).toBeGreaterThanOrEqual(2240)
+  })
+
   it('Should show a fixed-position mouse helper on the current page', async () => {
     const visibleCursor = new GhostCursor(page, { visible: true })
     await page.waitForFunction(() => document.querySelector('p-mouse-pointer') !== null)

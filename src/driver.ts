@@ -109,10 +109,13 @@ export const getMouseDriver = (page: Page): MouseDriver => {
 }
 
 /** Whether the page/browser can still receive input. */
-export const isPageConnected = (page: Page): boolean =>
-  isPlaywrightPage(page)
-    ? !page.isClosed()
-    : page.browser().connected
+export const isPageConnected = (page: Page): boolean => {
+  if (isPlaywrightPage(page)) return !page.isClosed()
+  // `connected` exists since puppeteer 22 (where `isConnected()` was removed); older versions only have `isConnected()`.
+  const browser: any = page.browser()
+  if (typeof browser.connected === 'boolean') return browser.connected
+  return typeof browser.isConnected === 'function' ? browser.isConnected() : true
+}
 
 /** Size of the browser window (Puppeteer) or viewport (Playwright). */
 export const getWindowSize = async (page: Page): Promise<{ width: number, height: number }> => {

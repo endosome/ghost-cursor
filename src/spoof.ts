@@ -20,7 +20,6 @@ import {
   type Vector,
   type TimedVector,
   bezierCurve,
-  bezierCurveSpeed,
   direction,
   magnitude,
   origin,
@@ -28,9 +27,12 @@ import {
   add,
   clamp,
   scale,
-  extrapolate
+  isFiniteVector,
+  secureMathRandom
 } from './math'
 import { installMouseHelper } from './mouse-helper'
+import { HumanizeMouseTrajectory } from './human-curve-generator'
+import { generateRandomCurveParameters } from './calculate-and-randomize'
 
 // TODO: remove in next major version, is now wrapped in the GhostCursor class.
 export { installMouseHelper }
@@ -38,6 +40,21 @@ export { getCDPClient, isPlaywrightPage }
 export type { Page, ElementHandle, Locator, BoundingBox, MouseButton } from './driver'
 
 const log = debug('ghost-cursor')
+
+/** Upper bounds so absurd inputs (huge distances, tiny speeds) can't freeze the cursor. */
+const MAX_PATH_STEPS = 10000
+const MAX_SCROLL_STEPS = 5000
+
+/**
+ * Path generation algorithm.
+ * - `ghost`: ghost-cursor's original Bezier curve with Fitts's-law timing and overshoot.
+ * - `humancursor`: port of the Python `humancursor` library (multi-knot Bezier curves with
+ *   distortion and tweening, no overshoot, targets the central 20-80% of elements).
+ */
+export type PathAlgorithm = 'ghost' | 'humancursor'
+
+/** A fixed delay in ms, or a `[min, max]` range a random delay is picked from. */
+export type DelayValue = number | readonly [number, number]
 
 export interface BoxOptions {
   /**
@@ -75,6 +92,14 @@ export interface ScrollOptions {
    */
   readonly scrollSpeed?: number
   /**
+   * How wheel events are generated.
+   * - `steps`: evenly sized wheel steps, `scrollSpeed` px each (instant at 100).
+   * - `momentum`: a stream of wheel events with ease-out-cubic momentum (fast start, slow finish),
+   *   ~16ms apart with jitter. `scrollSpeed` sets the duration (100 = 300ms, 1 = 2000ms).
+   * @default "steps"
+   */
+  readonly scrollMode?: 'steps' | 'momentum'
+  /**
    * Time to wait after scrolling.
    * @default 200
    */
@@ -98,9 +123,16 @@ export interface ScrollIntoViewOptions extends ScrollOptions, GetElementOptions 
    * @default 0
    */
   readonly inViewportMargin?: number
+  /**
+   * Add a random over/under-scroll of up to ±10% of the scroll distance (max ±50px), like a human
+   * who doesn't scroll perfectly. Also disables the instant `scrollIntoViewIfNeeded` shortcut so
+   * scrolling always happens through wheel events.
+   * @default false
+   */
+  readonly randomScrollPadding?: boolean
 }
 
-export interface MoveOptions extends BoxOptions, ScrollIntoViewOptions, Pick<PathOptions, 'moveSpeed'> {
+export interface MoveOptions extends BoxOptions, ScrollIntoViewOptions, Pick<PathOptions, 'moveSpeed' | 'algorithm'> {
   /**
    * Delay after moving the mouse in milliseconds. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
    * @default 0
@@ -122,6 +154,12 @@ export interface MoveOptions extends BoxOptions, ScrollIntoViewOptions, Pick<Pat
    * @default 500
    */
   readonly overshootThreshold?: number
+  /**
+   * Don't move when the cursor is already inside the element (and no `destination` is set),
+   * or already within 5px of the destination. Avoids needless zig-zagging.
+   * @default false (true when `algorithm` is "humancursor")
+   */
+  readonly skipMoveIfClose?: boolean
 }
 
 export interface ClickOptions extends MoveOptions {
@@ -132,9 +170,10 @@ export interface ClickOptions extends MoveOptions {
   readonly hesitate?: number
   /**
    * Delay between mousedown and mouseup in milliseconds.
+   * Can be a `[min, max]` range to pick a random delay, e.g. `[40, 60]`.
    * @default 0
    */
-  readonly waitForClick?: number
+  readonly waitForClick?: DelayValue
   /**
    * @default 2000
    */
@@ -164,16 +203,21 @@ export interface PathOptions {
    * Generate timestamps for each point in the path.
    */
   readonly useTimestamps?: boolean
+  /**
+   * Path generation algorithm. See {@link PathAlgorithm}.
+   * @default "ghost"
+   */
+  readonly algorithm?: PathAlgorithm
 }
 
-export interface RandomMoveOptions extends Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay' | 'moveSpeed'> {
+export interface RandomMoveOptions extends Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay' | 'moveSpeed' | 'algorithm'> {
   /**
    * @default 2000
    */
   readonly moveDelay?: number
 }
 
-export interface MoveToOptions extends PathOptions, Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay'> {
+export interface MoveToOptions extends PathOptions, Pick<MoveOptions, 'moveDelay' | 'randomizeMoveDelay' | 'skipMoveIfClose'> {
   /**
    * @default 0
    */
@@ -229,18 +273,25 @@ const delay = async (ms: number): Promise<void> => {
  * given the width of the element being clicked on
  * https://en.wikipedia.org/wiki/Fitts%27s_law
  */
-const fitts = (distance: number, width: number): number => {
-  const a = 0
-  const b = 2
-  const id = Math.log2(distance / width + 1)
-  return a + b * id
-}
+const fitts = (distance: number, width: number): number =>
+  2 * Math.log2(distance / width + 1)
+
+const resolveDelay = (value: DelayValue): number =>
+  typeof value === 'number' ? value : value[0] + secureMathRandom() * (value[1] - value[0])
 
 /** Get a random point on a box */
 const getRandomBoxPoint = (
   { x, y, width, height }: BoundingBox,
-  options?: Pick<BoxOptions, 'paddingPercentage'>
+  options?: Pick<BoxOptions, 'paddingPercentage'> & Pick<PathOptions, 'algorithm'>
 ): Vector => {
+  if (options?.algorithm === 'humancursor' && options.paddingPercentage === undefined) {
+    // humancursor picks an integer percentage in [20, 79] on each axis, avoiding the edges.
+    return {
+      x: x + width * (Math.floor(secureMathRandom() * 60) + 20) / 100,
+      y: y + height * (Math.floor(secureMathRandom() * 60) + 20) / 100
+    }
+  }
+
   let paddingWidth = 0
   let paddingHeight = 0
 
@@ -254,8 +305,8 @@ const getRandomBoxPoint = (
   }
 
   return {
-    x: x + paddingWidth / 2 + Math.random() * (width - paddingWidth),
-    y: y + paddingHeight / 2 + Math.random() * (height - paddingHeight)
+    x: x + paddingWidth / 2 + secureMathRandom() * (width - paddingWidth),
+    y: y + paddingHeight / 2 + secureMathRandom() * (height - paddingHeight)
   }
 }
 
@@ -325,6 +376,14 @@ export function path (
     ? { spreadOverride: options }
     : { ...options }
 
+  if (start.x === end.x && start.y === end.y) {
+    return clampPositive([start], optionsResolved)
+  }
+
+  if (optionsResolved.algorithm === 'humancursor') {
+    return humanCursorPath(start, end, optionsResolved)
+  }
+
   const DEFAULT_WIDTH = 100
   const MIN_STEPS = 25
   const width = 'width' in end && end.width !== 0 ? end.width : DEFAULT_WIDTH
@@ -333,11 +392,28 @@ export function path (
 
   const speed = optionsResolved.moveSpeed !== undefined && optionsResolved.moveSpeed > 0
     ? (25 / optionsResolved.moveSpeed)
-    : Math.random()
+    : secureMathRandom()
   const baseTime = speed * MIN_STEPS
-  const steps = Math.ceil((Math.log2(fitts(length, width) + 1) + baseTime) * 3)
+  const steps = Math.min(MAX_PATH_STEPS, Math.ceil((Math.log2(fitts(length, width) + 1) + baseTime) * 3))
   const re = curve.getLUT(steps)
   return clampPositive(re, optionsResolved)
+}
+
+/** Path generated with the humancursor algorithm (randomized multi-knot curve). */
+const humanCursorPath = (start: Vector, end: Vector | BoundingBox, options: PathOptions): Vector[] | TimedVector[] => {
+  const endPoint: Vector = { x: end.x, y: end.y }
+  const params = generateRandomCurveParameters(start, endPoint)
+  const curve = new HumanizeMouseTrajectory(start, endPoint, {
+    offsetBoundaryX: options.spreadOverride ?? params.offsetBoundaryX,
+    offsetBoundaryY: options.spreadOverride ?? params.offsetBoundaryY,
+    knotsCount: params.knotsCount,
+    distortionMean: params.distortionMean,
+    distortionStDev: params.distortionStDev,
+    distortionFrequency: params.distortionFrequency,
+    tweening: params.tween,
+    targetPoints: params.targetPoints
+  })
+  return clampPositive(curve.points, options)
 }
 
 const clampPositive = (vectors: Vector[], options?: PathOptions): Vector[] | TimedVector[] => {
@@ -350,19 +426,7 @@ const clampPositive = (vectors: Vector[], options?: PathOptions): Vector[] | Tim
 }
 
 const generateTimestamps = (vectors: Vector[], options?: PathOptions): TimedVector[] => {
-  const speed = options?.moveSpeed ?? (Math.random() * 0.5 + 0.5)
-  const timeToMove = (P0: Vector, P1: Vector, P2: Vector, P3: Vector, samples: number): number => {
-    let total = 0
-    const dt = 1 / samples
-
-    for (let t = 0; t < 1; t += dt) {
-      const v1 = bezierCurveSpeed(t * dt, P0, P1, P2, P3)
-      const v2 = bezierCurveSpeed(t, P0, P1, P2, P3)
-      total += (v1 + v2) * dt / 2
-    }
-
-    return Math.round(total / speed)
-  }
+  const speed = Math.max(0.001, options?.moveSpeed ?? (secureMathRandom() * 0.5 + 0.5))
 
   const timedVectors: TimedVector[] = []
 
@@ -370,11 +434,9 @@ const generateTimestamps = (vectors: Vector[], options?: PathOptions): TimedVect
     if (i === 0) {
       timedVectors.push({ ...vectors[i], timestamp: Date.now() })
     } else {
-      const P0 = vectors[i - 1]
-      const P1 = vectors[i]
-      const P2 = i + 1 < vectors.length ? vectors[i + 1] : extrapolate(P0, P1)
-      const P3 = i + 2 < vectors.length ? vectors[i + 2] : extrapolate(P1, P2)
-      const time = timeToMove(P0, P1, P2, P3, vectors.length)
+      // Time is proportional to the distance between consecutive points (O(n) instead of
+      // integrating the curve speed for every segment, which was O(n^2) and could freeze).
+      const time = Math.round(magnitude(direction(vectors[i - 1], vectors[i])) / speed)
 
       timedVectors.push({
         ...vectors[i],
@@ -449,6 +511,14 @@ export class GhostCursor {
     this.location = start
     this.defaultOptions = defaultOptions
 
+    // Playwright tracks the mouse position itself; start it where the cursor starts.
+    if (isPlaywrightPage(page) && (start.x !== 0 || start.y !== 0)) {
+      getMouseDriver(page).move(start.x, start.y).then(
+        (_) => { },
+        (_) => { }
+      )
+    }
+
     if (visible) {
       // Install mouse helper (visible mouse). Do not await the promise but return immediately
       this.installMouseHelper().then(
@@ -493,14 +563,21 @@ export class GhostCursor {
     scrollPositionTop: number
     scrollPositionLeft: number
   }> {
-    return (this.page as any).evaluate(() => ({
-      viewportWidth: document.body.clientWidth,
-      viewportHeight: document.body.clientHeight,
-      docHeight: document.body.scrollHeight,
-      docWidth: document.body.scrollWidth,
-      scrollPositionTop: window.scrollY,
-      scrollPositionLeft: window.scrollX
-    }))
+    return (this.page as any).evaluate(() => {
+      // Robust against pages without <body> or with body height not matching the document.
+      /* eslint-disable @typescript-eslint/strict-boolean-expressions, @typescript-eslint/prefer-nullish-coalescing */
+      const body = document.body as HTMLElement | null
+      const html = document.documentElement
+      return {
+        viewportWidth: body?.clientWidth || html.clientWidth || window.innerWidth || 0,
+        viewportHeight: body?.clientHeight || html.clientHeight || window.innerHeight || 0,
+        docHeight: Math.max(body?.scrollHeight || 0, html.scrollHeight || 0),
+        docWidth: Math.max(body?.scrollWidth || 0, html.scrollWidth || 0),
+        scrollPositionTop: window.scrollY,
+        scrollPositionLeft: window.scrollX
+      }
+      /* eslint-enable @typescript-eslint/strict-boolean-expressions, @typescript-eslint/prefer-nullish-coalescing */
+    })
   }
 
   /** Move the mouse to a point, getting the vectors via `path(previous, newLocation, options)`  */
@@ -517,6 +594,11 @@ export class GhostCursor {
         // In case this is called from random mouse movements and the users wants to move the mouse, abort
         if (abortOnMove && this.moving) {
           return
+        }
+
+        if (!isFiniteVector(v)) {
+          log('Warning: non-finite coordinates, skipping point', v)
+          continue
         }
 
         await mouse.move(v.x, v.y, 'timestamp' in v ? v.timestamp : undefined)
@@ -545,7 +627,7 @@ export class GhostCursor {
         const rand = await getRandomPagePoint(this.page)
         await this.moveMouse(rand, optionsResolved, true)
       }
-      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+      await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? secureMathRandom() : 1))
       this.randomMove(options).then(
         (_) => { },
         (_) => { }
@@ -630,13 +712,13 @@ export class GhostCursor {
       await delay(optionsResolved.hesitate)
 
       await this.mouseDown()
-      await delay(optionsResolved.waitForClick)
+      await delay(resolveDelay(optionsResolved.waitForClick))
       await this.mouseUp()
     } catch (error) {
       log('Warning: could not click mouse, error message:', error)
     }
 
-    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? secureMathRandom() : 1))
 
     this.toggleRandomMove(wasRandom)
   }
@@ -670,10 +752,16 @@ export class GhostCursor {
       await this.scrollIntoView(elem, optionsResolved)
 
       const box = await getElementBox(this.page, elem)
+      const isHumanCursor = optionsResolved.algorithm === 'humancursor'
+      const skipIfClose = optionsResolved.skipMoveIfClose ?? isHumanCursor
+      const alreadyInElement = skipIfClose && optionsResolved.destination === undefined &&
+        intersectsElement(this.location, box)
       const destination = (optionsResolved.destination !== undefined)
         ? add(box, optionsResolved.destination)
-        : getRandomBoxPoint(box, optionsResolved)
-      if (shouldOvershoot(
+        : alreadyInElement ? this.location : getRandomBoxPoint(box, optionsResolved)
+      if (skipIfClose && magnitude(direction(this.location, destination)) <= 5) {
+        // Already there (or close enough); don't move.
+      } else if (!isHumanCursor && shouldOvershoot(
         this.location,
         destination,
         optionsResolved.overshootThreshold
@@ -704,7 +792,7 @@ export class GhostCursor {
 
     this.toggleRandomMove(wasRandom)
 
-    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? secureMathRandom() : 1))
   }
 
   /** Moves the mouse to the specified destination point. */
@@ -722,10 +810,13 @@ export class GhostCursor {
 
     const wasRandom = !this.moving
     this.toggleRandomMove(false)
-    await this.moveMouse(destination, optionsResolved)
+    const skipIfClose = optionsResolved.skipMoveIfClose ?? optionsResolved.algorithm === 'humancursor'
+    if (!skipIfClose || magnitude(direction(this.location, destination)) > 5) {
+      await this.moveMouse(destination, optionsResolved)
+    }
     this.toggleRandomMove(wasRandom)
 
-    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? Math.random() : 1))
+    await delay(optionsResolved.moveDelay * (optionsResolved.randomizeMoveDelay ? secureMathRandom() : 1))
   }
 
   /** Moves the mouse by a specified amount */
@@ -820,11 +911,23 @@ export class GhostCursor {
         deltaX = right - viewportWidth// Scroll right
       }
 
+      if (optionsResolved.randomScrollPadding === true) {
+        // Humans don't scroll perfectly: over/under-scroll by up to 10% of the distance (max 50px).
+        const jitter = (distance: number): number =>
+          (secureMathRandom() * 2 - 1) * Math.min(Math.abs(distance) * 0.1, 50)
+        deltaX += jitter(deltaX)
+        deltaY += jitter(deltaY)
+      }
+
       await this.scroll({ x: deltaX, y: deltaY }, optionsResolved)
     }
 
     try {
-      if (scrollSpeed === 100 && optionsResolved.inViewportMargin <= 0) {
+      const useInstantScroll = scrollSpeed === 100 &&
+        optionsResolved.inViewportMargin <= 0 &&
+        optionsResolved.randomScrollPadding !== true &&
+        optionsResolved.scrollMode !== 'momentum'
+      if (useInstantScroll && (await elem.boundingBox()) !== null) {
         try {
           await scrollIntoViewIfNeeded(this.page, elem)
         } catch {
@@ -833,9 +936,13 @@ export class GhostCursor {
       } else {
         await manuallyScroll()
       }
-    } catch (e) {
+    } catch (e: any) {
       // use regular JS scroll method as a fallback
-      log('Falling back to JS scroll method', e)
+      if (typeof e?.message === 'string' && (e.message as string).includes('Node does not have a layout object')) {
+        log('Node does not have a layout object, falling back to JS scroll method')
+      } else {
+        log('Falling back to JS scroll method', e)
+      }
       await (elem as any).evaluate((e: Element, smooth: boolean) => e.scrollIntoView({
         block: 'center',
         behavior: smooth ? 'smooth' : undefined
@@ -860,6 +967,14 @@ export class GhostCursor {
 
     const mouse = getMouseDriver(this.page)
 
+    if (optionsResolved.scrollMode === 'momentum') {
+      // scrollSpeed 100 = 300ms, scrollSpeed 1 = 2000ms
+      const duration = scale(scrollSpeed, [1, 100], [2000, 300])
+      await this.momentumScroll(delta.x ?? 0, delta.y ?? 0, duration)
+      await delay(optionsResolved.scrollDelay)
+      return
+    }
+
     let deltaX = delta.x ?? 0
     let deltaY = delta.y ?? 0
     const xDirection = deltaX < 0 ? -1 : 1
@@ -878,10 +993,12 @@ export class GhostCursor {
       ? scrollSpeed
       : scale(scrollSpeed, [EXP_SCALE_START, 100], [EXP_SCALE_START, largerDistance])
 
-    const numSteps = Math.floor(largerDistance / largerDistanceScrollStep)
-    const largerDistanceRemainder = largerDistance % largerDistanceScrollStep
-    const shorterDistanceScrollStep = Math.floor(shorterDistance / numSteps)
-    const shorterDistanceRemainder = shorterDistance % numSteps
+    const numSteps = largerDistanceScrollStep > 0
+      ? Math.min(MAX_SCROLL_STEPS, Math.floor(largerDistance / largerDistanceScrollStep))
+      : 0
+    const largerDistanceRemainder = largerDistanceScrollStep > 0 ? largerDistance % largerDistanceScrollStep : 0
+    const shorterDistanceScrollStep = numSteps > 0 ? Math.floor(shorterDistance / numSteps) : 0
+    const shorterDistanceRemainder = numSteps > 0 ? shorterDistance % numSteps : 0
 
     for (let i = 0; i < numSteps; i++) {
       let longerDistanceDelta = largerDistanceScrollStep
@@ -896,10 +1013,39 @@ export class GhostCursor {
       deltaX = deltaX * xDirection
       deltaY = deltaY * yDirection
 
-      await mouse.wheel(this.location.x, this.location.y, deltaX, deltaY)
+      if (Number.isFinite(deltaX) && Number.isFinite(deltaY)) {
+        await mouse.wheel(this.location.x, this.location.y, deltaX, deltaY)
+      }
     }
 
     await delay(optionsResolved.scrollDelay)
+  }
+
+  /**
+   * Scrolls by (`x`, `y`) with a stream of wheel events following an ease-out-cubic curve
+   * (fast start, slow finish) over `duration` ms. Ticks are ~16ms apart with ±2ms jitter.
+   */
+  private async momentumScroll (x: number, y: number, duration: number): Promise<void> {
+    const mouse = getMouseDriver(this.page)
+    const ease = (t: number): number => 1 - Math.pow(1 - t, 3)
+    const startTime = Date.now()
+    let scrolledX = 0
+    let scrolledY = 0
+    let nextTick = startTime
+    for (;;) {
+      const t = Math.min((Date.now() - startTime) / duration, 1)
+      // Send the remaining delta up to this point, so rounding never accumulates and totals are exact.
+      const dx = Math.round(x * ease(t)) - scrolledX
+      const dy = Math.round(y * ease(t)) - scrolledY
+      if (dx !== 0 || dy !== 0) {
+        await mouse.wheel(this.location.x, this.location.y, dx, dy)
+        scrolledX += dx
+        scrolledY += dy
+      }
+      if (t >= 1) return
+      nextTick += 16 + (secureMathRandom() * 4 - 2)
+      await delay(nextTick - Date.now())
+    }
   }
 
   /** Scrolls to the specified destination point. */

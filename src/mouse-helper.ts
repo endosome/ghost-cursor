@@ -12,14 +12,16 @@ interface WindowWithMouseHelper extends Window {
  */
 export async function installMouseHelper (page: Page):
 Promise<{ removeMouseHelper: () => Promise<void> }> {
-  const removeInitScript = await addInitScript(page, () => {
+  const initScript = (): void => {
     const attachListener = (): void => {
+      // Don't install twice in the same document
+      if ((window as WindowWithMouseHelper).removeMouseHelper !== undefined) return
       const box = document.createElement('p-mouse-pointer')
       const styleElement = document.createElement('style')
       styleElement.innerHTML = `
         p-mouse-pointer {
           pointer-events: none;
-          position: absolute;
+          position: fixed;
           top: 0;
           z-index: 10000;
           left: 0;
@@ -61,8 +63,8 @@ Promise<{ removeMouseHelper: () => Promise<void> }> {
       document.body.appendChild(box)
 
       const onMouseMove = (event: MouseEvent): void => {
-        box.style.left = `${event.pageX}px`
-        box.style.top = `${event.pageY}px`
+        box.style.left = `${event.clientX}px`
+        box.style.top = `${event.clientY}px`
         box.classList.remove('p-mouse-pointer-hide')
         updateButtons(event.buttons)
       }
@@ -109,6 +111,7 @@ Promise<{ removeMouseHelper: () => Promise<void> }> {
         document.removeEventListener('mouseenter', onMouseEnter, true)
         box.remove()
         styleElement.remove()
+        delete (window as WindowWithMouseHelper).removeMouseHelper
       }
     }
 
@@ -117,7 +120,11 @@ Promise<{ removeMouseHelper: () => Promise<void> }> {
     } else {
       window.addEventListener('DOMContentLoaded', attachListener, false)
     }
-  })
+  }
+
+  const removeInitScript = await addInitScript(page, initScript)
+  // Also install on the already-loaded document, not just on future navigations.
+  await (page as any).evaluate(initScript)
 
   async function removeMouseHelper (): Promise<void> {
     await (page as any).evaluate(() => {

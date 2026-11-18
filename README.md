@@ -139,7 +139,7 @@ Simulates a mouse click at the specified selector or element.
 - **selector (optional):** CSS selector or ElementHandle to identify the target element.
 - **options (optional):** Additional options for clicking. **Extends the `options` of the `move`, `scrollIntoView`, and `getElement` functions (below)**
   - `hesitate (number):` Delay before initiating the click action in milliseconds. Default is `0`.
-  - `waitForClick (number):` Delay between mousedown and mouseup in milliseconds. Default is `0`.
+  - `waitForClick (number | [min, max]):` Delay between mousedown and mouseup in milliseconds. Pass a range like `[40, 60]` for a random delay. Default is `0`.
   - `moveDelay (number):` Delay after moving the mouse in milliseconds. Default is `2000`. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
   - `button (MouseButton):` Mouse button to click. Default is `left`.
   - `clickCount (number):` Number of times to click the button. Default is `1`.
@@ -157,6 +157,8 @@ Moves the mouse to the specified selector or element.
   - `maxTries (number):` Maximum number of attempts to mouse-over the element. Default is `10`.
   - `moveSpeed (number):` Speed of mouse movement. Default is random.
   - `overshootThreshold (number):` Distance from current location to destination that triggers overshoot to occur. (Below this distance, no overshoot will occur). Default is `500`.
+  - `algorithm ('ghost' | 'humancursor'):` Path algorithm, see [Path algorithms](#path-algorithms). Default is `ghost`.
+  - `skipMoveIfClose (boolean):` Don't move when the cursor is already inside the element (and no `destination` is set) or within 5px of the destination. Default is `false` (`true` with `algorithm: 'humancursor'`).
 
 #### `moveTo(destination: Vector, options?: MoveToOptions): Promise<void>`
 
@@ -167,6 +169,7 @@ Moves the mouse to the specified destination point.
   - `moveSpeed (number):` Speed of mouse movement. Default is random.
   - `moveDelay (number):` Delay after moving the mouse in milliseconds. Default is `0`. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
   - `randomizeMoveDelay (boolean):` Randomize delay between actions from `0` to `moveDelay`. Default is `true`.
+  - `algorithm` / `skipMoveIfClose`: same as for `move`.
 
 #### `moveBy(delta: Vector, options?: MoveToOptions): Promise<void>`
 
@@ -184,6 +187,7 @@ Scrolls the element into view. If already in view, no scroll occurs.
   - `scrollSpeed (number):` Scroll speed (when scrolling occurs). 0 to 100. 100 is instant. Default is `100`.
   - `scrollDelay (number):` Time to wait after scrolling (when scrolling occurs). Default is `200`.
   - `inViewportMargin (number):` Margin (in px) to add around the element when ensuring it is in the viewport. Default is `0`.
+  - `randomScrollPadding (boolean):` Over/under-scroll by a random amount of up to ±10% of the distance (max ±50px), like a human. Always scrolls with wheel events (never the instant scroll). Default is `false`.
 
 #### `scrollTo: (destination: Partial<Vector> | 'top' | 'bottom' | 'left' | 'right' | ElementHandle, options?: ScrollOptions) => Promise<void>`
 
@@ -203,6 +207,7 @@ Scrolls the page the distance set by `delta`.
 - **options (optional):** Additional options for scrolling.
   - `scrollSpeed (number):` Scroll speed. 0 to 100. 100 is instant. Default is `100`.
   - `scrollDelay (number):` Time to wait after scrolling. Default is `200`.
+  - `scrollMode ('steps' | 'momentum'):` `steps` sends evenly sized wheel steps of `scrollSpeed` px. `momentum` sends a stream of wheel events about 16ms apart (with jitter) following an ease-out-cubic curve (fast start, slow finish), lasting 300ms at `scrollSpeed` 100 up to 2000ms at `scrollSpeed` 1. Default is `steps`.
 
 #### `mouseDown / mouseUp: (options?: MouseButtonOptions) => Promise<void>`
 
@@ -243,7 +248,8 @@ Generates a set of points for mouse movement between two coordinates.
 - **options (optional):** Additional options for generating the path. Can also be a number which will set `spreadOverride`.
   - `spreadOverride (number):` Override the spread of the generated path.
   - `moveSpeed (number):` Speed of mouse movement. Default is random.
-  - `useTimestamps (boolean):` Generate timestamps for each point based on the trapezoidal rule.
+  - `useTimestamps (boolean):` Generate timestamps for each point, based on the distance between consecutive points and `moveSpeed`.
+  - `algorithm ('ghost' | 'humancursor'):` Path algorithm. Default is `ghost`.
 
 ## How does it work
 
@@ -264,6 +270,18 @@ that way, so only one side of the line is picked when generating random points.
 When calculating how fast the mouse should be moving we use <a href="https://en.wikipedia.org/wiki/Fitts%27s_law">Fitts's Law</a>
 to determine the amount of points we should be returning relative to the width of the element being clicked on and the distance
 between the mouse and the object.
+
+### Path algorithms
+
+Set `algorithm: 'humancursor'` (for example in `defaultOptions.move`, `moveTo`, `click` and `randomMove`) to use a port of the
+Python [humancursor](https://github.com/riflosnake/HumanCursor) library instead of the curve described above:
+
+- Bezier curves with 2 to 10 randomly placed internal knots (weighted towards few), built with Bernstein polynomials.
+- Random vertical distortion applied to some points, then resampled to 35 to 79 points with a random easing function
+  (ease-out expo/quart/cubic/sine/circ, ease-in-out variants, linear).
+- No overshoot. Targets land in the central 20% to 79% of the element, and the cursor doesn't move when it is already inside it.
+
+All randomness uses a cryptographically secure source (`crypto.getRandomValues`, falling back to Node's `crypto`).
 
 ## To turn on logging, please set your DEBUG env variable like so:
 

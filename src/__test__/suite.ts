@@ -139,4 +139,50 @@ export const runSuite = (name: string, getPage: () => Page): void => describe(`M
     await cursor.scrollTo(box2)
     expect(await isIntersectingViewport(box2)).toBeTruthy()
   })
+
+  it('Should click with the humancursor algorithm and a random waitForClick range', async () => {
+    await page.waitForFunction(() => performance.now() > 1100)
+    await cursor.click('#box1', { algorithm: 'humancursor', waitForClick: [40, 60] })
+    expect(await page.evaluate(() => window.boxWasClicked)).toEqual(true)
+  })
+
+  it('Should not move when already inside the element with skipMoveIfClose', async () => {
+    await page.waitForFunction(() => performance.now() > 1100)
+    await cursor.move('#box1')
+    const before = cursor.getLocation()
+    await cursor.move('#box1', { skipMoveIfClose: true })
+    expect(cursor.getLocation()).toEqual(before)
+  })
+
+  it('Should scroll with momentum to exact positions', async () => {
+    // Many small wheel events; Chrome may round the final position by a pixel.
+    const expectNear = async (expected: { top: number, left: number }): Promise<void> => {
+      const { top, left } = await getScrollPosition()
+      expect(Math.abs(top - expected.top)).toBeLessThanOrEqual(2)
+      expect(Math.abs(left - expected.left)).toBeLessThanOrEqual(2)
+    }
+    await cursor.scrollTo('bottom', { scrollMode: 'momentum', scrollSpeed: 100 })
+    await expectNear({ top: 4450, left: 0 })
+    await cursor.scrollTo({ y: 200, x: 400 }, { scrollMode: 'momentum', scrollSpeed: 90 })
+    await expectNear({ top: 200, left: 400 })
+  })
+
+  it('Should scroll elements into view with momentum, random padding and slow speed', async () => {
+    const box2 = await waitForSelector('#box2')
+    await cursor.scrollIntoView(box2, { scrollMode: 'momentum', randomScrollPadding: true, inViewportMargin: 50 })
+    expect(await isIntersectingViewport(box2)).toBeTruthy()
+    await cursor.scrollTo('top')
+    expect(await isIntersectingViewport(box2)).toBeFalsy()
+    await cursor.scrollIntoView(box2, { scrollSpeed: 50, inViewportMargin: 50 })
+    expect(await isIntersectingViewport(box2)).toBeTruthy()
+  })
+
+  it('Should show a fixed-position mouse helper on the current page', async () => {
+    const visibleCursor = new GhostCursor(page, { visible: true })
+    await page.waitForFunction(() => document.querySelector('p-mouse-pointer') !== null)
+    expect(await page.evaluate(() => document.querySelectorAll('p-mouse-pointer').length)).toBe(1)
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('p-mouse-pointer') as Element).position)).toBe('fixed')
+    await visibleCursor.removeMouseHelper()
+    expect(await page.evaluate(() => document.querySelector('p-mouse-pointer'))).toBeNull()
+  })
 })

@@ -1,4 +1,26 @@
 import { Bezier } from 'bezier-js'
+import * as nodeCrypto from 'crypto'
+
+/**
+ * Cryptographically secure random number in [0, 1). Drop-in replacement for `secureMathRandom()`.
+ * Uses Web Crypto when available, then Node's crypto, then falls back to `secureMathRandom()`.
+ */
+export const secureMathRandom = (): number => {
+  const webCrypto: Crypto | undefined = typeof globalThis !== 'undefined' ? (globalThis as any).crypto : undefined
+  if (webCrypto?.getRandomValues !== undefined) {
+    const array = new Uint32Array(1)
+    webCrypto.getRandomValues(array)
+    return array[0] / 0x100000000
+  }
+  try {
+    if (nodeCrypto?.randomBytes !== undefined) {
+      return nodeCrypto.randomBytes(4).readUInt32BE(0) / 0x100000000
+    }
+  } catch {
+    // ignore
+  }
+  return secureMathRandom()
+}
 
 export interface Vector {
   x: number
@@ -20,19 +42,23 @@ export const scale = (value: number, range1: [number, number], range2: [number, 
   (value - range1[0]) * (range2[1] - range2[0]) / (range1[1] - range1[0]) + range2[0]
 
 export const direction = (a: Vector, b: Vector): Vector => sub(b, a)
-export const perpendicular = (a: Vector): Vector => ({ x: a.y, y: -1 * a.x })
+// Avoids returning -0 for zero components.
+export const perpendicular = (a: Vector): Vector => ({ x: a.y === 0 ? 0 : a.y, y: a.x === 0 ? 0 : -1 * a.x })
 export const magnitude = (a: Vector): number =>
   Math.sqrt(Math.pow(a.x, 2) + Math.pow(a.y, 2))
-export const unit = (a: Vector): Vector => div(a, magnitude(a))
+export const unit = (a: Vector): Vector => {
+  const mag = magnitude(a)
+  return mag === 0 ? { x: 0, y: 0 } : div(a, mag)
+}
 export const setMagnitude = (a: Vector, amount: number): Vector =>
   mult(unit(a), amount)
 
 export const randomNumberRange = (min: number, max: number): number =>
-  Math.random() * (max - min) + min
+  secureMathRandom() * (max - min) + min
 
 export const randomVectorOnLine = (a: Vector, b: Vector): Vector => {
   const vec = direction(a, b)
-  const multiplier = Math.random()
+  const multiplier = secureMathRandom()
   return add(a, mult(vec, multiplier))
 }
 
@@ -51,21 +77,25 @@ export const generateBezierAnchors = (
   b: Vector,
   spread: number
 ): [Vector, Vector] => {
-  const side = Math.round(Math.random()) === 1 ? 1 : -1
+  const side = secureMathRandom() >= 0.5 ? 1 : -1
   const calc = (): Vector => {
     const [randMid, normalV] = randomNormalLine(a, b, spread)
     const choice = mult(normalV, side)
     return randomVectorOnLine(randMid, add(randMid, choice))
   }
-  return [calc(), calc()].sort((a, b) => a.x - b.x) as [Vector, Vector]
+  // Order anchors along the direction of travel (not always left-to-right), so right-to-left paths don't loop.
+  const anchors = [calc(), calc()]
+  if (a.x < b.x) anchors.sort((m, n) => m.x - n.x)
+  else anchors.sort((m, n) => n.x - m.x)
+  return anchors as [Vector, Vector]
 }
 
 export const clamp = (target: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, target))
 
 export const overshoot = (coordinate: Vector, radius: number): Vector => {
-  const a = Math.random() * 2 * Math.PI
-  const rad = radius * Math.sqrt(Math.random())
+  const a = secureMathRandom() * 2 * Math.PI
+  const rad = radius * Math.sqrt(secureMathRandom())
   const vector = { x: rad * Math.cos(a), y: rad * Math.sin(a) }
   return add(coordinate, vector)
 }
@@ -99,3 +129,6 @@ export const bezierCurveSpeed = (
   const B2 = 3 * (1 - t) ** 2 * (P1.y - P0.y) + 6 * (1 - t) * t * (P2.y - P1.y) + 3 * t ** 2 * (P3.y - P2.y)
   return Math.sqrt(B1 ** 2 + B2 ** 2)
 }
+
+export const isFiniteVector = (a: Vector): boolean =>
+  Number.isFinite(a.x) && Number.isFinite(a.y)

@@ -25,5 +25,8 @@ jobs:
           corepack install
       - name: Install dependencies and build
         run: corepack yarn install --immutable
+      - name: Build
+        run: corepack yarn build
       - name: Publish to NPM
+        # Scoped package: publishConfig in package.json sets access=public and provenance (needs id-token: write)
         run: npm publish

@@ -7,21 +7,25 @@ like the definitely-not-robot you are.
 
 > Oh yeah? Could a robot do _**this?**_
 
+> **Fork:** `@endosome/ghost-cursor` is a fork of [Xetera/ghost-cursor](https://github.com/Xetera/ghost-cursor) that adds
+> Playwright support (alongside Puppeteer), an optional [humancursor](#path-algorithms) path algorithm, momentum scrolling,
+> and fixes from the community forks. It's a drop-in replacement: only the package name in your imports changes.
+
 ## Installation
 
 ```sh
-yarn add ghost-cursor
+yarn add @endosome/ghost-cursor
 ```
 or with npm
 ```sh
-npm install ghost-cursor
+npm install @endosome/ghost-cursor
 ```
 
 ## Usage
 Generating movement data between 2 coordinates.
 
 ```js
-import { path } from "ghost-cursor"
+import { path } from "@endosome/ghost-cursor"
 
 const from = { x: 100, y: 100 }
 const to = { x: 600, y: 700 }
@@ -42,7 +46,7 @@ const route = path(from, to)
 
 Generating movement data between 2 coordinates with timestamps.
 ```js
-import { path } from "ghost-cursor"
+import { path } from "@endosome/ghost-cursor"
 
 const from = { x: 100, y: 100 }
 const to = { x: 600, y: 700 }
@@ -65,7 +69,7 @@ const route = path(from, to, { useTimestamps: true })
 Usage with puppeteer:
 
 ```js
-import { GhostCursor } from "ghost-cursor"
+import { GhostCursor } from "@endosome/ghost-cursor"
 import puppeteer from "puppeteer"
 
 const run = async (url) => {
@@ -85,7 +89,7 @@ const run = async (url) => {
 Usage with playwright (works with Chromium, Firefox and WebKit):
 
 ```js
-import { GhostCursor } from "ghost-cursor"
+import { GhostCursor } from "@endosome/ghost-cursor"
 import { chromium } from "playwright"
 
 const run = async (url) => {

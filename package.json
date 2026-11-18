@@ -1,8 +1,15 @@
 {
-  "name": "ghost-cursor",
+  "name": "@endosome/ghost-cursor",
   "version": "1.4.2",
   "description": "Move your mouse like a human in puppeteer or playwright, or generate realistic movements on any 2D plane",
-  "repository": "https://github.com/Xetera/ghost-cursor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/endosome/ghost-cursor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/endosome/ghost-cursor/issues"
+  },
+  "homepage": "https://github.com/endosome/ghost-cursor#readme",
   "main": "lib/spoof.js",
   "types": "lib/spoof.d.ts",
   "scripts": {
@@ -21,10 +28,17 @@
     "playwright"
   ],
   "author": "Xetera",
+  "contributors": [
+    "endosome (https://github.com/endosome)"
+  ],
   "license": "ISC",
   "files": [
     "lib/**/*"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "dependencies": {
     "@types/bezier-js": "^4.1.3",
     "bezier-js": "^6.1.4",

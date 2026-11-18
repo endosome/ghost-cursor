@@ -23,5 +23,5 @@ jobs:
       - name: Upload compiled code as artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ghost-cursor
+          name: endosome-ghost-cursor
           path: lib/

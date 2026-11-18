@@ -281,6 +281,10 @@ Python [humancursor](https://github.com/riflosnake/HumanCursor) library instead 
   (ease-out expo/quart/cubic/sine/circ, ease-in-out variants, linear).
 - No overshoot. Targets land in the central 20% to 79% of the element, and the cursor doesn't move when it is already inside it.
 
+`examples/demo.ts` and `examples/osu-test.ts` show it in action (`yarn ts-node examples/osu-test.ts`), with options that
+reproduce the human-cursor fork's behavior: `algorithm: 'humancursor'`, `scrollMode: 'momentum'`,
+`randomScrollPadding: true` and `waitForClick: [40, 60]`.
+
 All randomness uses a cryptographically secure source (`crypto.getRandomValues`, falling back to Node's `crypto`).
 
 ## To turn on logging, please set your DEBUG env variable like so:

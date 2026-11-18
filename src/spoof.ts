@@ -569,8 +569,8 @@ export class GhostCursor {
       const body = document.body as HTMLElement | null
       const html = document.documentElement
       return {
-        viewportWidth: body?.clientWidth || html.clientWidth || window.innerWidth || 0,
-        viewportHeight: body?.clientHeight || html.clientHeight || window.innerHeight || 0,
+        viewportWidth: window.innerWidth || html.clientWidth || body?.clientWidth || 0,
+        viewportHeight: window.innerHeight || html.clientHeight || body?.clientHeight || 0,
         docHeight: Math.max(body?.scrollHeight || 0, html.scrollHeight || 0),
         docWidth: Math.max(body?.scrollWidth || 0, html.scrollWidth || 0),
         scrollPositionTop: window.scrollY,

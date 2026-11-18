@@ -80,4 +80,18 @@ describe('path', () => {
     expect(points.length).toBeLessThanOrEqual(10001)
     expect(Date.now() - start).toBeLessThan(5000)
   })
+
+  it.each(['ghost', 'humancursor'] as const)('%s: non-finite targets return only the start point', (algorithm) => {
+    for (const end of [{ x: NaN, y: 5 }, { x: Infinity, y: 5 }, { x: 5, y: -Infinity }]) {
+      expect(path({ x: 1, y: 2 }, end, { algorithm })).toEqual([{ x: 1, y: 2 }])
+    }
+  })
+
+  it.each(['ghost', 'humancursor'] as const)('%s: huge distances return promptly', (algorithm) => {
+    const start = Date.now()
+    const points = path({ x: 0, y: 0 }, { x: 1e12, y: 1e12 }, { algorithm })
+    expect(points.length).toBeLessThanOrEqual(10001)
+    expect(points.every(isFiniteVector)).toBe(true)
+    expect(Date.now() - start).toBeLessThan(5000)
+  })
 })

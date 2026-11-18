@@ -135,9 +135,10 @@ export class HumanizeMouseTrajectory {
     // Generate enough points to ensure smooth curve
     // Use 1 point per pixel of distance, minimum 50 points
     // This balances smoothness with performance
-    const midPtsCnt = Math.max(
-      Math.floor(distance),
-      50
+    // Capped so huge distances can't freeze (or exhaust memory); tweening resamples to <= 79 points anyway.
+    const midPtsCnt = Math.min(
+      Math.max(Math.floor(distance), 50),
+      5000
     )
 
     const allKnots = [this.fromPoint, ...knots, this.toPoint]

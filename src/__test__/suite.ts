@@ -76,8 +76,8 @@ export const runSuite = (name: string, getPage: () => Page): void => describe(`M
     await testClick('//*[@id="box1"]')
   })
 
-  it('Should click on a Playwright Locator (playwright only)', async () => {
-    if (!isPlaywrightPage(page)) return
+  it('Should click on a Locator', async () => {
+    await page.waitForFunction(() => performance.now() > 1100)
     expect(await page.evaluate(() => window.boxWasClicked)).toEqual(false)
     await cursor.click(page.locator('#box1'))
     expect(await page.evaluate(() => window.boxWasClicked)).toEqual(true)
@@ -125,6 +125,36 @@ export const runSuite = (name: string, getPage: () => Page): void => describe(`M
 
     await cursor.scrollTo({ y: 200, x: 400 })
     expect(await getScrollPosition()).toEqual({ top: 200, left: 400 })
+  })
+
+  it('Should send useTimestamps moves with realistic event timestamps, paced in real time', async () => {
+    await page.evaluate(() => {
+      (window as any).moves = []
+      document.addEventListener('mousemove', (e) => { (window as any).moves.push([e.timeStamp, performance.now()]) })
+    })
+    const started = Date.now()
+    await cursor.moveTo({ x: 400, y: 300 }, { useTimestamps: true, moveSpeed: undefined })
+    const elapsed = Date.now() - started
+    const moves: Array<[number, number]> = await page.evaluate(() => (window as any).moves)
+    expect(moves.length).toBeGreaterThan(5)
+    for (let i = 0; i < moves.length; i++) {
+      const [timeStamp, receivedAt] = moves[i]
+      expect(timeStamp).toBeGreaterThan(0)
+      // Not stamped in the future relative to the page clock (small slack for clock rounding)
+      expect(timeStamp).toBeLessThanOrEqual(receivedAt + 50)
+      if (i > 0) expect(timeStamp).toBeGreaterThanOrEqual(moves[i - 1][0])
+    }
+    // Paced in real time: the move takes (at least) as long as its timestamps span
+    const span = moves[moves.length - 1][0] - moves[0][0]
+    expect(span).toBeGreaterThan(100)
+    expect(elapsed).toBeGreaterThanOrEqual(span - 20)
+  })
+
+  it('Should scroll to a Locator', async () => {
+    const box2 = await waitForSelector('#box2')
+    expect(await isIntersectingViewport(box2)).toBeFalsy()
+    await cursor.scrollTo(page.locator('#box2'))
+    expect(await isIntersectingViewport(box2)).toBeTruthy()
   })
 
   it('Should scroll to an ElementHandle correctly from a non-zero scroll position', async () => {

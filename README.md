@@ -159,7 +159,7 @@ Moves the mouse to the specified selector or element.
   - `moveDelay (number):` Delay after moving the mouse in milliseconds. Default is `0`. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
   - `randomizeMoveDelay (boolean):` Randomize delay between actions from `0` to `moveDelay`. Default is `true`.
   - `maxTries (number):` Maximum number of attempts to mouse-over the element. Default is `10`.
-  - `moveSpeed (number):` Speed of mouse movement. Default is random.
+  - `moveSpeed (number):` Speed of mouse movement, any number > 0 (higher is faster). See [moveSpeed](#movespeed). Default is random.
   - `overshootThreshold (number):` Distance from current location to destination that triggers overshoot to occur. (Below this distance, no overshoot will occur). Default is `500`.
   - `algorithm ('ghost' | 'humancursor'):` Path algorithm, see [Path algorithms](#path-algorithms). Default is `ghost`.
   - `skipMoveIfClose (boolean):` Don't move when the cursor is already inside the element (and no `destination` is set) or within 5px of the destination. Default is `false` (`true` with `algorithm: 'humancursor'`).
@@ -170,7 +170,7 @@ Moves the mouse to the specified destination point.
 
 - **destination:** An object with `x` and `y` coordinates representing the target position. For example, `{ x: 500, y: 300 }`.
 - **options (optional):** Additional options for moving.
-  - `moveSpeed (number):` Speed of mouse movement. Default is random.
+  - `moveSpeed (number):` Speed of mouse movement, any number > 0 (higher is faster). See [moveSpeed](#movespeed). Default is random.
   - `moveDelay (number):` Delay after moving the mouse in milliseconds. Default is `0`. If `randomizeMoveDelay=true`, delay is randomized from 0 to `moveDelay`.
   - `randomizeMoveDelay (boolean):` Randomize delay between actions from `0` to `moveDelay`. Default is `true`.
   - `algorithm` / `skipMoveIfClose`: same as for `move`.
@@ -251,8 +251,8 @@ Generates a set of points for mouse movement between two coordinates.
 - **end:** Ending point (or bounding box) of the movement.
 - **options (optional):** Additional options for generating the path. Can also be a number which will set `spreadOverride`.
   - `spreadOverride (number):` Override the spread of the generated path.
-  - `moveSpeed (number):` Speed of mouse movement. Default is random.
-  - `useTimestamps (boolean):` Generate timestamps for each point, based on the distance between consecutive points and `moveSpeed`.
+  - `moveSpeed (number):` Speed of mouse movement, any number > 0 (higher is faster). See [moveSpeed](#movespeed). Default is random.
+  - `useTimestamps (boolean):` Generate timestamps (ms since epoch) for each point, spaced by distance / `moveSpeed` (px/ms). When the cursor moves with these, it dispatches each point at its timestamp, and Puppeteer events carry these timestamps.
   - `algorithm ('ghost' | 'humancursor'):` Path algorithm. Default is `ghost`.
 
 ## How does it work
@@ -274,6 +274,17 @@ that way, so only one side of the line is picked when generating random points.
 When calculating how fast the mouse should be moving we use <a href="https://en.wikipedia.org/wiki/Fitts%27s_law">Fitts's Law</a>
 to determine the amount of points we should be returning relative to the width of the element being clicked on and the distance
 between the mouse and the object.
+
+### moveSpeed
+
+`moveSpeed` has no fixed range or unit; any number > 0 works and higher is faster.
+
+- **`ghost` algorithm (default):** sets how many points the path has, roughly `3 * (log2(fitts + 1) + 625 / moveSpeed)`.
+  Each point is one mouse event, so a higher `moveSpeed` means fewer, larger steps. Values around 25 and up behave like the
+  random default; `1` gives ~1900 points. With Puppeteer every point is one CDP round trip, so on remote browsers
+  (e.g. browserless) a higher `moveSpeed` makes moves much faster.
+- **`humancursor` algorithm:** doesn't change the number of points (35 to 79, random).
+- **With `useTimestamps`:** also the speed in pixels per millisecond between points (default random 0.5 to 1).
 
 ### Path algorithms
 

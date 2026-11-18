@@ -12,6 +12,7 @@ import {
   isElementHandle,
   isPageConnected,
   isPlaywrightLocator,
+  isPuppeteerLocator,
   isPlaywrightPage,
   querySelector,
   scrollIntoViewIfNeeded
@@ -38,7 +39,7 @@ import { generateRandomCurveParameters } from './calculate-and-randomize'
 // TODO: remove in next major version, is now wrapped in the GhostCursor class.
 export { installMouseHelper }
 export { getCDPClient, isPlaywrightPage }
-export type { Page, ElementHandle, ElementHandleOf, Locator, BoundingBox, MouseButton, CDPSession } from './driver'
+export type { Page, ElementHandle, ElementHandleOf, Locator, PlaywrightLocator, PuppeteerLocator, BoundingBox, MouseButton, CDPSession } from './driver'
 
 const log = debug('ghost-cursor')
 
@@ -195,13 +196,21 @@ export interface PathOptions {
    */
   readonly spreadOverride?: number
   /**
-   * Speed of mouse movement.
-   * Default is random.
+   * Speed of mouse movement. Any number > 0, no fixed range; higher is faster.
+   * - `ghost` algorithm: sets the number of points in the path (roughly `3 * (log2(fitts + 1) + 625 / moveSpeed)`),
+   *   so higher values mean fewer points. Each point is one mouse event (with Puppeteer one CDP round trip),
+   *   so fewer points also means much faster moves on remote browsers. Around 25+ behaves like the random default;
+   *   1 gives ~1900 points.
+   * - `humancursor` algorithm: does not change the number of points (35-79, random).
+   * - With `useTimestamps`: also the speed in pixels per millisecond between points.
+   * Default is random (and 0.5-1 px/ms for timestamps).
    */
   readonly moveSpeed?: number
 
   /**
-   * Generate timestamps for each point in the path.
+   * Generate timestamps (ms since epoch) for each point in the path, spaced by the distance between
+   * points divided by `moveSpeed` (px/ms). The cursor then dispatches each point at its timestamp, and with
+   * Puppeteer the events carry these timestamps.
    */
   readonly useTimestamps?: boolean
   /**
@@ -379,6 +388,11 @@ export function path (
 
   if (start.x === end.x && start.y === end.y) {
     return clampPositive([start], optionsResolved)
+  }
+
+  if (!isFiniteVector(start) || !isFiniteVector(end)) {
+    log('Warning: non-finite path start/end, not moving', start, end)
+    return isFiniteVector(start) ? clampPositive([start], optionsResolved) : []
   }
 
   if (optionsResolved.algorithm === 'humancursor') {
@@ -604,6 +618,12 @@ export class GhostCursor<P extends Page = Page> {
         if (!isFiniteVector(v)) {
           log('Warning: non-finite coordinates, skipping point', v)
           continue
+        }
+
+        if ('timestamp' in v) {
+          // Dispatch each point at its timestamp, so events aren't stamped ahead of the page clock
+          // and the movement takes the time its timestamps describe.
+          await delay(v.timestamp - Date.now())
         }
 
         await mouse.move(v.x, v.y, 'timestamp' in v ? v.timestamp : undefined)
@@ -1084,8 +1104,9 @@ export class GhostCursor<P extends Page = Page> {
         case 'right':
           return { x: docWidth }
         default: {
-          if (isElementHandle(destination) || isPlaywrightLocator(destination)) {
-            const box = await (destination as any).boundingBox() as BoundingBox | null
+          if (isElementHandle(destination) || isPlaywrightLocator(destination) || isPuppeteerLocator(destination)) {
+            const elem = await this.getElement(destination)
+            const box: BoundingBox | null = await (elem as ElementHandle).boundingBox()
             if (box == null) {
               throw new Error('no boundingBox')
             }
@@ -1129,6 +1150,11 @@ export class GhostCursor<P extends Page = Page> {
       }
     } else if (isPlaywrightLocator(selector)) {
       elem = await selector.first().elementHandle(
+        optionsResolved.waitForSelector !== undefined ? { timeout: optionsResolved.waitForSelector } : undefined
+      )
+      if (elem === null) throw new Error('Could not resolve Locator to an element')
+    } else if (isPuppeteerLocator(selector)) {
+      elem = await selector.waitHandle(
         optionsResolved.waitForSelector !== undefined ? { timeout: optionsResolved.waitForSelector } : undefined
       )
       if (elem === null) throw new Error('Could not resolve Locator to an element')

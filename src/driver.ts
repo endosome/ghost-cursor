@@ -32,11 +32,19 @@ export interface ElementHandle {
 }
 
 /** A Playwright `Locator` (typed structurally). */
-export interface Locator {
+export interface PlaywrightLocator {
   elementHandle: (...args: any[]) => Promise<any>
   first: () => any
   boundingBox: (...args: any[]) => Promise<BoundingBox | null>
 }
+
+/** A Puppeteer `Locator` (typed structurally). */
+export interface PuppeteerLocator {
+  waitHandle: (...args: any[]) => Promise<any>
+}
+
+/** A Playwright or Puppeteer `Locator`. */
+export type Locator = PlaywrightLocator | PuppeteerLocator
 
 /** A CDP session (Puppeteer's `CDPSession`). */
 export interface CDPSession {
@@ -69,10 +77,16 @@ export const isElementHandle = (item: any): item is ElementHandle =>
   item !== null && item !== undefined && typeof item.asElement === 'function'
 
 /** Playwright `Locator` (has `elementHandle` and `first`, but no `asElement`). */
-export const isPlaywrightLocator = (item: any): item is Locator =>
+export const isPlaywrightLocator = (item: any): item is PlaywrightLocator =>
   item !== null && item !== undefined &&
   typeof item.elementHandle === 'function' &&
   typeof item.first === 'function' &&
+  typeof item.asElement !== 'function'
+
+/** Puppeteer `Locator` (has `waitHandle`, but no `asElement`). */
+export const isPuppeteerLocator = (item: any): item is PuppeteerLocator =>
+  item !== null && item !== undefined &&
+  typeof item.waitHandle === 'function' &&
   typeof item.asElement !== 'function'
 
 /** The function signature to access the internal CDP client changed in puppeteer 14.4.1 */
@@ -125,7 +139,8 @@ export const getMouseDriver = (anyPage: Page): MouseDriver => {
   return {
     move: async (x, y, timestamp) => {
       const params: Puppeteer.Protocol.Input.DispatchMouseEventRequest = { type: 'mouseMoved', x, y }
-      if (timestamp !== undefined) params.timestamp = timestamp
+      // `timestamp` is in ms since epoch (like Date.now()); CDP expects seconds since epoch.
+      if (timestamp !== undefined) params.timestamp = timestamp / 1000
       await cdp().send('Input.dispatchMouseEvent', params)
     },
     button: async (action, x, y, button, clickCount) => {

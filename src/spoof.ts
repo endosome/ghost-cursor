@@ -3,6 +3,7 @@ import {
   type Page,
   type BoundingBox,
   type Locator,
+  type ElementHandleOf,
   type MouseButton,
   getCDPClient,
   getContentQuadsBox,
@@ -37,7 +38,7 @@ import { generateRandomCurveParameters } from './calculate-and-randomize'
 // TODO: remove in next major version, is now wrapped in the GhostCursor class.
 export { installMouseHelper }
 export { getCDPClient, isPlaywrightPage }
-export type { Page, ElementHandle, Locator, BoundingBox, MouseButton } from './driver'
+export type { Page, ElementHandle, ElementHandleOf, Locator, BoundingBox, MouseButton, CDPSession } from './driver'
 
 const log = debug('ghost-cursor')
 
@@ -460,8 +461,12 @@ const intersectsElement = (vec: Vector, box: BoundingBox): boolean => {
   )
 }
 
-export class GhostCursor {
-  public readonly page: Page
+/**
+ * Generic over the page type, so e.g. `getElement` returns Puppeteer's `ElementHandle` for a Puppeteer page
+ * and Playwright's for a Playwright page. Inferred from the constructor argument.
+ */
+export class GhostCursor<P extends Page = Page> {
+  public readonly page: P
   /** Default options for cursor functions. */
   public defaultOptions: DefaultOptions
 
@@ -476,7 +481,7 @@ export class GhostCursor {
   private static readonly OVERSHOOT_RADIUS = 120
 
   constructor (
-    page: Page,
+    page: P,
     {
       start = origin,
       performRandomMoves = false,
@@ -1108,7 +1113,7 @@ export class GhostCursor {
     selector: string | ElementHandle | Locator,
     /** @default defaultOptions.getElement */
     options?: GetElementOptions
-  ): Promise<ElementHandle> {
+  ): Promise<ElementHandleOf<P>> {
     const optionsResolved = {
       ...this.defaultOptions?.getElement,
       ...options
@@ -1131,7 +1136,7 @@ export class GhostCursor {
       // ElementHandle
       elem = selector
     }
-    return elem
+    return elem as ElementHandleOf<P>
   }
 }
 
@@ -1140,8 +1145,8 @@ export class GhostCursor {
  * TODO: Remove on next major version change. Prefer to just do `new GhostCursor` instead of this function.
  * Is here because removing would be breaking.
  */
-export const createCursor = (
-  page: Page,
+export const createCursor = <P extends Page>(
+  page: P,
   /**
    * Cursor start position.
    * @default { x: 0, y: 0 }
@@ -1162,4 +1167,4 @@ export const createCursor = (
    * @default false
    */
   visible: boolean = false
-): GhostCursor => new GhostCursor(page, { start, performRandomMoves, defaultOptions, visible })
+): GhostCursor<P> => new GhostCursor(page, { start, performRandomMoves, defaultOptions, visible })

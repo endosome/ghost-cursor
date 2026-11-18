@@ -7,17 +7,46 @@
  *   (`page.mouse`, `addInitScript`, `scrollIntoViewIfNeeded`, ...), so they also
  *   work with Firefox and WebKit.
  */
+// Library types are only used internally (casts). Exported signatures use the structural types below,
+// so the published .d.ts files don't import `puppeteer` or `playwright-core`: consumers only need
+// the library they actually use, with or without `skipLibCheck`.
 import type * as Puppeteer from 'puppeteer'
 import type * as Playwright from 'playwright-core'
 
-export type PuppeteerPage = Puppeteer.Page
-export type PlaywrightPage = Playwright.Page
-export type Page = PuppeteerPage | PlaywrightPage
+type PuppeteerPage = Puppeteer.Page
+type PlaywrightPage = Playwright.Page
+type PuppeteerElementHandle = Puppeteer.ElementHandle<Element>
+type PlaywrightElementHandle = Playwright.ElementHandle<Element>
 
-export type PuppeteerElementHandle<T extends Node = Element> = Puppeteer.ElementHandle<T>
-export type PlaywrightElementHandle<T extends Node = Element> = Playwright.ElementHandle<T>
-export type ElementHandle<T extends Node = Element> = PuppeteerElementHandle<T> | PlaywrightElementHandle<T>
-export type Locator = Playwright.Locator
+/** A Puppeteer or Playwright `Page` (typed structurally). */
+export interface Page {
+  evaluate: (...args: any[]) => Promise<any>
+  $: (...args: any[]) => Promise<any>
+}
+
+/** A Puppeteer or Playwright `ElementHandle` (typed structurally). */
+export interface ElementHandle {
+  boundingBox: () => Promise<BoundingBox | null>
+  evaluate: (...args: any[]) => Promise<any>
+  asElement: () => any
+}
+
+/** A Playwright `Locator` (typed structurally). */
+export interface Locator {
+  elementHandle: (...args: any[]) => Promise<any>
+  first: () => any
+  boundingBox: (...args: any[]) => Promise<BoundingBox | null>
+}
+
+/** A CDP session (Puppeteer's `CDPSession`). */
+export interface CDPSession {
+  send: (method: any, ...params: any[]) => Promise<any>
+}
+
+/** The element handle type of a page type, e.g. Puppeteer's `ElementHandle<Element>` for a Puppeteer `Page`. */
+export type ElementHandleOf<P> = P extends { $: (...args: any[]) => Promise<infer E> }
+  ? (Exclude<E, null | undefined> extends never ? ElementHandle : Exclude<E, null | undefined>)
+  : ElementHandle
 
 export interface BoundingBox {
   x: number
@@ -28,10 +57,13 @@ export interface BoundingBox {
 
 export type MouseButton = 'none' | 'left' | 'middle' | 'right' | 'back' | 'forward'
 
-export const isPlaywrightPage = (page: Page): page is PlaywrightPage =>
+/** Whether `page` is a Playwright page (otherwise it's treated as Puppeteer). */
+export const isPlaywrightPage = (page: Page): boolean =>
   typeof (page as any).addInitScript === 'function' && typeof (page as any).context === 'function'
 
-export const isPuppeteerPage = (page: Page): page is PuppeteerPage => !isPlaywrightPage(page)
+const asPlaywright = (page: Page): PlaywrightPage | null =>
+  isPlaywrightPage(page) ? page as unknown as PlaywrightPage : null
+const asPuppeteer = (page: Page): PuppeteerPage => page as unknown as PuppeteerPage
 
 export const isElementHandle = (item: any): item is ElementHandle =>
   item !== null && item !== undefined && typeof item.asElement === 'function'
@@ -44,7 +76,9 @@ export const isPlaywrightLocator = (item: any): item is Locator =>
   typeof item.asElement !== 'function'
 
 /** The function signature to access the internal CDP client changed in puppeteer 14.4.1 */
-export const getCDPClient = (page: PuppeteerPage): Puppeteer.CDPSession =>
+export const getCDPClient = (page: Page): CDPSession => getPuppeteerCDPClient(asPuppeteer(page))
+
+const getPuppeteerCDPClient = (page: PuppeteerPage): Puppeteer.CDPSession =>
   typeof (page as any)._client === 'function'
     ? (page as any)._client()
     : (page as any)._client
@@ -57,8 +91,9 @@ export interface MouseDriver {
 
 const playwrightMousePositions = new WeakMap<PlaywrightPage, { x: number, y: number }>()
 
-export const getMouseDriver = (page: Page): MouseDriver => {
-  if (isPlaywrightPage(page)) {
+export const getMouseDriver = (anyPage: Page): MouseDriver => {
+  const page = asPlaywright(anyPage)
+  if (page !== null) {
     const toPwButton = (b: MouseButton): 'left' | 'right' | 'middle' =>
       b === 'right' || b === 'middle' ? b : 'left'
     const move = async (x: number, y: number): Promise<void> => {
@@ -86,7 +121,7 @@ export const getMouseDriver = (page: Page): MouseDriver => {
     }
   }
 
-  const cdp = (): Puppeteer.CDPSession => getCDPClient(page)
+  const cdp = (): Puppeteer.CDPSession => getPuppeteerCDPClient(asPuppeteer(anyPage))
   return {
     move: async (x, y, timestamp) => {
       const params: Puppeteer.Protocol.Input.DispatchMouseEventRequest = { type: 'mouseMoved', x, y }
@@ -109,23 +144,26 @@ export const getMouseDriver = (page: Page): MouseDriver => {
 }
 
 /** Whether the page/browser can still receive input. */
-export const isPageConnected = (page: Page): boolean => {
-  if (isPlaywrightPage(page)) return !page.isClosed()
+export const isPageConnected = (anyPage: Page): boolean => {
+  const page = asPlaywright(anyPage)
+  if (page !== null) return !page.isClosed()
   // `connected` exists since puppeteer 22 (where `isConnected()` was removed); older versions only have `isConnected()`.
-  const browser: any = page.browser()
+  const browser: any = asPuppeteer(anyPage).browser()
   if (typeof browser.connected === 'boolean') return browser.connected
   return typeof browser.isConnected === 'function' ? browser.isConnected() : true
 }
 
 /** Size of the browser window (Puppeteer) or viewport (Playwright). */
-export const getWindowSize = async (page: Page): Promise<{ width: number, height: number }> => {
-  if (isPlaywrightPage(page)) {
-    const vp = page.viewportSize()
+export const getWindowSize = async (anyPage: Page): Promise<{ width: number, height: number }> => {
+  const pw = asPlaywright(anyPage)
+  if (pw !== null) {
+    const vp = pw.viewportSize()
     if (vp !== null) return vp
-    return await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+    return await pw.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
   }
+  const page = asPuppeteer(anyPage)
   const targetId: string = (page.target() as any)._targetId
-  const { bounds } = await getCDPClient(page).send('Browser.getWindowForTarget', { targetId })
+  const { bounds } = await getPuppeteerCDPClient(page).send('Browser.getWindowForTarget', { targetId })
   return { width: bounds.width ?? 0, height: bounds.height ?? 0 }
 }
 
@@ -135,9 +173,9 @@ export const getWindowSize = async (page: Page): Promise<{ width: number, height
  */
 export const getContentQuadsBox = async (page: Page, element: ElementHandle): Promise<BoundingBox | null> => {
   if (isPlaywrightPage(page)) return null
-  const objectId = (element as PuppeteerElementHandle).remoteObject().objectId
+  const objectId = (element as unknown as PuppeteerElementHandle).remoteObject().objectId
   if (objectId === undefined) return null
-  const { quads } = await getCDPClient(page).send('DOM.getContentQuads', { objectId })
+  const { quads } = await getPuppeteerCDPClient(asPuppeteer(page)).send('DOM.getContentQuads', { objectId })
   if (quads.length === 0) return null
   return {
     x: quads[0][0],
@@ -150,46 +188,50 @@ export const getContentQuadsBox = async (page: Page, element: ElementHandle): Pr
 /** Instantly scroll the element into view if it isn't already. */
 export const scrollIntoViewIfNeeded = async (page: Page, element: ElementHandle): Promise<void> => {
   if (isPlaywrightPage(page)) {
-    await (element as PlaywrightElementHandle).scrollIntoViewIfNeeded()
+    await (element as unknown as PlaywrightElementHandle).scrollIntoViewIfNeeded()
     return
   }
-  const objectId = (element as PuppeteerElementHandle).remoteObject().objectId
+  const objectId = (element as unknown as PuppeteerElementHandle).remoteObject().objectId
   if (objectId === undefined) throw new Error('Element objectId is undefined')
-  await getCDPClient(page).send('DOM.scrollIntoViewIfNeeded', { objectId })
+  await getPuppeteerCDPClient(asPuppeteer(page)).send('DOM.scrollIntoViewIfNeeded', { objectId })
 }
 
 /** Query a single element by CSS selector or XPath (starting with `//` or `(//`). */
 export const querySelector = async (
-  page: Page,
+  anyPage: Page,
   selector: string,
   waitForSelector?: number
 ): Promise<ElementHandle | null> => {
   const isXPath = selector.startsWith('//') || selector.startsWith('(//')
 
-  if (isPlaywrightPage(page)) {
+  const pw = asPlaywright(anyPage)
+  if (pw !== null) {
     const pwSelector = isXPath ? `xpath=${selector}` : selector
     if (waitForSelector !== undefined) {
-      await page.waitForSelector(pwSelector, { timeout: waitForSelector, state: 'attached' })
+      await pw.waitForSelector(pwSelector, { timeout: waitForSelector, state: 'attached' })
     }
-    return await page.$(pwSelector)
+    return await pw.$(pwSelector)
   }
 
+  const page = asPuppeteer(anyPage)
   const ppSelector = isXPath ? `xpath/.${selector}` : selector
   if (waitForSelector !== undefined) {
     await page.waitForSelector(ppSelector, { timeout: waitForSelector })
   }
   if (!isXPath) return await page.$(ppSelector)
   const [handle] = await page.$$(ppSelector)
-  return (handle?.asElement() as PuppeteerElementHandle | null | undefined) ?? null
+  return (handle?.asElement() as ElementHandle | null | undefined) ?? null
 }
 
 /** Inject a script into every new document. Returns a function that stops injecting it. */
-export const addInitScript = async (page: Page, fn: () => void): Promise<() => Promise<void>> => {
-  if (isPlaywrightPage(page)) {
-    const disposable: any = await page.addInitScript(fn)
+export const addInitScript = async (anyPage: Page, fn: () => void): Promise<() => Promise<void>> => {
+  const pw = asPlaywright(anyPage)
+  if (pw !== null) {
+    const disposable: any = await pw.addInitScript(fn)
     // Playwright >= 1.56 returns a Disposable; older versions can't remove init scripts.
     return async () => { await disposable?.dispose?.() }
   }
+  const page = asPuppeteer(anyPage)
   const { identifier } = await page.evaluateOnNewDocument(fn)
   return async () => { await page.removeScriptToEvaluateOnNewDocument(identifier) }
 }

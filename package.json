@@ -1,6 +1,6 @@
 {
   "name": "@endosome/ghost-cursor",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "Move your mouse like a human in puppeteer or playwright, or generate realistic movements on any 2D plane",
   "repository": {
     "type": "git",

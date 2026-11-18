@@ -1,7 +1,7 @@
 {
   "name": "ghost-cursor",
   "version": "1.4.2",
-  "description": "Move your mouse like a human in puppeteer or generate realistic movements on any 2D plane",
+  "description": "Move your mouse like a human in puppeteer or playwright, or generate realistic movements on any 2D plane",
   "repository": "https://github.com/Xetera/ghost-cursor",
   "main": "lib/spoof.js",
   "types": "lib/spoof.d.ts",
@@ -16,7 +16,9 @@
   "keywords": [
     "bezier-curve",
     "mouse-movement",
-    "botting"
+    "botting",
+    "puppeteer",
+    "playwright"
   ],
   "author": "Xetera",
   "license": "ISC",
@@ -37,10 +39,23 @@
     "husky": "^9.1.7",
     "jest": "^30.4.2",
     "jest-puppeteer": "^11.0.0",
+    "playwright-core": "^1.65.1",
     "puppeteer": "^25.4.0",
     "ts-node": "^10.9.2",
     "ts-standard": "^12.0.2",
     "typescript": "6"
+  },
+  "peerDependencies": {
+    "playwright-core": ">=1.20",
+    "puppeteer": ">=14"
+  },
+  "peerDependenciesMeta": {
+    "playwright-core": {
+      "optional": true
+    },
+    "puppeteer": {
+      "optional": true
+    }
   },
   "resolutions": {
     "jest-environment-node": "30.4.1"

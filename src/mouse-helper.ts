@@ -1,4 +1,4 @@
-import type { Page } from 'puppeteer'
+import { type Page, addInitScript } from './driver'
 
 interface WindowWithMouseHelper extends Window {
   removeMouseHelper?: () => void
@@ -12,7 +12,7 @@ interface WindowWithMouseHelper extends Window {
  */
 export async function installMouseHelper (page: Page):
 Promise<{ removeMouseHelper: () => Promise<void> }> {
-  const { identifier: evaluateOnNewDocumentId } = await page.evaluateOnNewDocument(() => {
+  const removeInitScript = await addInitScript(page, () => {
     const attachListener = (): void => {
       const box = document.createElement('p-mouse-pointer')
       const styleElement = document.createElement('style')
@@ -120,11 +120,11 @@ Promise<{ removeMouseHelper: () => Promise<void> }> {
   })
 
   async function removeMouseHelper (): Promise<void> {
-    await page.evaluate(() => {
+    await (page as any).evaluate(() => {
       ;(window as WindowWithMouseHelper).removeMouseHelper?.()
     })
 
-    await page.removeScriptToEvaluateOnNewDocument(evaluateOnNewDocumentId)
+    await removeInitScript()
   }
 
   /**

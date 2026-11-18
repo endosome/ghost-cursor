@@ -82,7 +82,28 @@ const run = async (url) => {
 }
 ```
 
-### Puppeteer-specific behavior
+Usage with playwright (works with Chromium, Firefox and WebKit):
+
+```js
+import { GhostCursor } from "ghost-cursor"
+import { chromium } from "playwright"
+
+const run = async (url) => {
+  const browser = await chromium.launch({ headless: false })
+  const page = await browser.newPage()
+  const cursor = new GhostCursor(page)
+  await page.goto(url)
+  await cursor.click("#sign-up button")
+  // Playwright Locators are accepted anywhere a selector or ElementHandle is
+  await cursor.click(page.locator("#sign-up button"))
+}
+```
+
+The page type is detected automatically. With Puppeteer, input is sent over CDP; with Playwright, ghost-cursor
+uses `page.mouse`, so it isn't limited to Chromium. Both `puppeteer` and `playwright` are optional peer dependencies:
+install whichever you use.
+
+### Browser behavior
 * `cursor.move()` will automatically overshoot or slightly miss and re-adjust for elements that are too far away
 from the cursor's starting point.
 * When moving over objects, a random coordinate that's within the element will be selected instead of
@@ -97,7 +118,7 @@ hovering over the exact center of the element.
 
 ## Methods
 
-#### `new GhostCursor(page: puppeteer.Page, { start?: Vector, performRandomMoves?: boolean, defaultOptions?: DefaultOptions, visible?: boolean = false }): GhostCursor`
+#### `new GhostCursor(page: puppeteer.Page | playwright.Page, { start?: Vector, performRandomMoves?: boolean, defaultOptions?: DefaultOptions, visible?: boolean = false }): GhostCursor`
 
 Creates the ghost cursor that contains the action functions described below.
 
